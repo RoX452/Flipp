@@ -21,7 +21,7 @@ def highlight_text(text, query):
     
     stop_words = {"para", "como", "este", "esta", "estos", "estas", "pero", "porque", "cuando", "donde", "quien", "resumeme", "explicame", "dime", "cual", "sobre", "aquel", "aquella", "tiene"}
     # Extraer palabras clave (ignorar palabras comunes y cortas)
-    words = [re.escape(w) for w in query.split() if len(w) > 4 and w.lower() not in stop_words]
+    words = [re.escape(w) for w in query.split() if len(w) > 3 and w.lower() not in stop_words]
     
     if not words: return text
     pattern = re.compile(f"({'|'.join(words)})", re.IGNORECASE)
@@ -63,7 +63,7 @@ with st.sidebar:
 uploaded_files = st.file_uploader("Sube archivos PDF para analizar", type="pdf", accept_multiple_files=True)
 
 if uploaded_files and st.session_state.vector_store is None:
-    with st.spinner("Leyendo y procesando todos los documentos..."):
+    with st.spinner("Leyendo y procesando todos los documentos (Configurando IA Multilingüe)..."):
         all_splits = []
         for uploaded_file in uploaded_files:
             with tempfile.NamedTemporaryFile(delete=False, suffix=".pdf") as tmp_file:
@@ -75,12 +75,14 @@ if uploaded_files and st.session_state.vector_store is None:
             for doc in docs:
                 doc.metadata["source_filename"] = uploaded_file.name
 
-            text_splitter = RecursiveCharacterTextSplitter(chunk_size=1000, chunk_overlap=200)
+            # Chunks más grandes para no perder contexto en el chat
+            text_splitter = RecursiveCharacterTextSplitter(chunk_size=1500, chunk_overlap=300)
             splits = text_splitter.split_documents(docs)
             all_splits.extend(splits)
             os.unlink(tmp_path)
 
-        embeddings = HuggingFaceEmbeddings(model_name="all-MiniLM-L6-v2")
+        # Usar modelo MULTILINGÜE para que entienda el español perfectamente y no traiga resultados basura
+        embeddings = HuggingFaceEmbeddings(model_name="sentence-transformers/paraphrase-multilingual-MiniLM-L12-v2")
         from langchain_core.vectorstores import InMemoryVectorStore
         st.session_state.vector_store = InMemoryVectorStore.from_documents(documents=all_splits, embedding=embeddings)
     
@@ -90,8 +92,17 @@ if uploaded_files and st.session_state.vector_store is None:
 if st.session_state.vector_store is not None and semantic_query:
     with st.sidebar:
         st.write("**Coincidencias encontradas:**")
-        results = st.session_state.vector_store.similarity_search(semantic_query, k=3)
-        for i, res in enumerate(results):
+        # Búsqueda semántica
+        results_with_scores = st.session_state.vector_store.similarity_search_with_score(semantic_query, k=5)
+        
+        # Filtrar resultados muy distantes y ordenar (InMemoryVectorStore usa distancia L2 o Coseno, los mejores tienen score distinto)
+        # Mostrar los top 3 que realmente tengan sentido
+        valid_results = [res for res, score in results_with_scores][:3]
+        
+        if not valid_results:
+            st.info("No se encontraron coincidencias relevantes.")
+        
+        for i, res in enumerate(valid_results):
             filename = res.metadata.get("source_filename", "Desconocido")
             page = res.metadata.get("page", "N/A")
             
@@ -102,7 +113,6 @@ if st.session_state.vector_store is not None and semantic_query:
                 st.caption(f"📄 {filename} (Pág. {page})")
                 st.markdown(f"<div style='font-size:0.85em; margin-bottom: 10px; color: #a0a0a0;'>{snippet_hl}</div>", unsafe_allow_html=True)
                 
-                # Botón más discreto
                 if st.button("Abrir fragmento 📖", key=f"btn_expand_{i}", use_container_width=True):
                     st.session_state.expanded_chunk = {
                         "text": res.page_content,
@@ -114,7 +124,6 @@ if st.session_state.vector_store is not None and semantic_query:
 if st.session_state.vector_store is not None:
     st.markdown("---")
     
-    # Renderizar el fragmento expandido con un diseño más integrado
     if st.session_state.expanded_chunk:
         chunk = st.session_state.expanded_chunk
         
@@ -138,26 +147,25 @@ if st.session_state.vector_store is not None:
 
     st.subheader("Chat con tu documento")
 
-    # Mostrar el historial del chat
+    # Mostrar el historial del chat con AVATARES PERSONALIZADOS
     for msg in st.session_state.messages:
-        with st.chat_message(msg["role"]):
+        avatar_icon = "🧑‍💻" if msg["role"] == "user" else "✨"
+        with st.chat_message(msg["role"], avatar=avatar_icon):
             st.write(msg["content"])
             if msg["role"] == "assistant" and "sources" in msg:
-                # El expander está encapsulado DENTRO del mensaje del asistente para evitar confusión
                 with st.expander("Ver fuentes de esta respuesta"):
                     for i, doc in enumerate(msg["sources"]):
                         filename = doc.metadata.get("source_filename", "Desconocido")
                         st.caption(f"Fragmento {i+1} - {filename} (Pág. {doc.metadata.get('page', 'N/A')}):")
-                        hl_text = highlight_text(doc.page_content, msg.get("query", ""))
-                        st.markdown(hl_text, unsafe_allow_html=True)
+                        # NO resaltar el prompt del usuario en las fuentes del chat
+                        st.markdown(doc.page_content)
 
     user_query = st.chat_input("Escribe aquí tu pregunta...")
 
     if user_query:
-        # Añadir al historial
         st.session_state.messages.append({"role": "user", "content": user_query})
         
-        with st.chat_message("user"):
+        with st.chat_message("user", avatar="🧑‍💻"):
             st.write(user_query)
         
         with st.spinner("Analizando múltiples documentos..."):
@@ -173,25 +181,22 @@ if st.session_state.vector_store is not None:
                 ("human", "{input}"),
             ])
 
-            # RAG puro: SOLO busca fragmentos para ESTA consulta específica
-            retriever = st.session_state.vector_store.as_retriever(search_kwargs={"k": 5})
+            # Aumentar 'k' a 8 para asegurar que Gemini tenga suficiente contexto de múltiples PDFs
+            retriever = st.session_state.vector_store.as_retriever(search_kwargs={"k": 8})
             question_answer_chain = create_stuff_documents_chain(llm, prompt)
             rag_chain = create_retrieval_chain(retriever, question_answer_chain)
 
             response = rag_chain.invoke({"input": user_query})
 
-            # Mostrar respuesta y asociar EXCLUSIVAMENTE sus fuentes a este mensaje
-            with st.chat_message("assistant"):
+            with st.chat_message("assistant", avatar="✨"):
                 st.write(response["answer"])
                 
                 with st.expander("Ver fuentes de esta respuesta"):
                     for i, doc in enumerate(response["context"]):
                         filename = doc.metadata.get("source_filename", "Desconocido")
                         st.caption(f"Fragmento {i+1} - {filename} (Pág. {doc.metadata.get('page', 'N/A')}):")
-                        hl_text = highlight_text(doc.page_content, user_query)
-                        st.markdown(hl_text, unsafe_allow_html=True)
+                        st.markdown(doc.page_content)
 
-            # Guardar en historial
             st.session_state.messages.append({
                 "role": "assistant", 
                 "content": response["answer"],
