@@ -36,6 +36,8 @@ st.markdown("Sube tus pdfs")
 # Inicialización de estados
 if "vector_store" not in st.session_state:
     st.session_state.vector_store = None
+if "all_chunks" not in st.session_state:
+    st.session_state.all_chunks = []
 if "messages" not in st.session_state:
     st.session_state.messages = []
 if "expanded_chunk" not in st.session_state:
@@ -55,6 +57,7 @@ with st.sidebar:
     st.markdown("---")
     if st.button("Limpiar Base de Datos", use_container_width=True):
         st.session_state.vector_store = None
+        st.session_state.all_chunks = []
         st.session_state.messages = []
         st.session_state.expanded_chunk = None
         st.session_state.last_semantic_query = ""
@@ -81,7 +84,10 @@ if uploaded_files and st.session_state.vector_store is None:
             all_splits.extend(splits)
             os.unlink(tmp_path)
 
-        # Usar modelo MULTILINGÜE para que entienda el español perfectamente y no traiga resultados basura
+        # Guardar fragmentos originales en bruto para búsquedas literales
+        st.session_state.all_chunks = all_splits
+
+        # Usar modelo MULTILINGÜE para el Chat (RAG)
         embeddings = HuggingFaceEmbeddings(model_name="sentence-transformers/paraphrase-multilingual-MiniLM-L12-v2")
         from langchain_core.vectorstores import InMemoryVectorStore
         st.session_state.vector_store = InMemoryVectorStore.from_documents(documents=all_splits, embedding=embeddings)
@@ -92,15 +98,20 @@ if uploaded_files and st.session_state.vector_store is None:
 if st.session_state.vector_store is not None and semantic_query:
     with st.sidebar:
         st.write("**Coincidencias encontradas:**")
-        # Búsqueda semántica
-        results_with_scores = st.session_state.vector_store.similarity_search_with_score(semantic_query, k=5)
         
-        # Filtrar resultados muy distantes y ordenar (InMemoryVectorStore usa distancia L2 o Coseno, los mejores tienen score distinto)
-        # Mostrar los top 3 que realmente tengan sentido
-        valid_results = [res for res, score in results_with_scores][:3]
+        # Búsqueda EXACTA (Ctrl+F múltiple) en lugar de Semántica
+        query_words = semantic_query.lower().split()
+        valid_results = []
+        
+        for chunk in st.session_state.all_chunks:
+            # Revisa si TODAS las palabras buscadas existen literalmente en el fragmento
+            if all(w in chunk.page_content.lower() for w in query_words):
+                valid_results.append(chunk)
+                if len(valid_results) >= 5:  # Límite de resultados
+                    break
         
         if not valid_results:
-            st.info("No se encontraron coincidencias relevantes.")
+            st.info(f"No se encontraron coincidencias exactas para '{semantic_query}'.")
         
         for i, res in enumerate(valid_results):
             filename = res.metadata.get("source_filename", "Desconocido")
