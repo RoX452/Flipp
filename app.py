@@ -46,6 +46,8 @@ if "last_semantic_query" not in st.session_state:
     st.session_state.last_semantic_query = ""
 if "search_query" not in st.session_state:
     st.session_state.search_query = ""
+if "embeddings_model" not in st.session_state:
+    st.session_state.embeddings_model = None
 
 # Variable global para guardar las coincidencias de la barra lateral
 valid_results = []
@@ -57,6 +59,7 @@ def clear_database():
     st.session_state.expanded_chunk = None
     st.session_state.last_semantic_query = ""
     st.session_state.search_query = ""
+    st.session_state.embeddings_model = None
 
 with st.sidebar:
     st.header("Búsqueda Rápida")
@@ -93,6 +96,7 @@ if uploaded_files and st.session_state.vector_store is None:
         st.session_state.all_chunks = all_splits
 
         embeddings = HuggingFaceEmbeddings(model_name="sentence-transformers/paraphrase-multilingual-MiniLM-L12-v2")
+        st.session_state.embeddings_model = embeddings
         from langchain_core.vectorstores import InMemoryVectorStore
         st.session_state.vector_store = InMemoryVectorStore.from_documents(documents=all_splits, embedding=embeddings)
     
@@ -205,8 +209,10 @@ if st.session_state.vector_store is not None:
                 ("human", "{input}"),
             ])
 
-            if semantic_query and valid_results:
-                context_docs = valid_results
+            if semantic_query and valid_results and st.session_state.embeddings_model:
+                from langchain_core.vectorstores import InMemoryVectorStore
+                temp_store = InMemoryVectorStore.from_documents(valid_results, embedding=st.session_state.embeddings_model)
+                context_docs = temp_store.similarity_search(user_query, k=min(3, len(valid_results)))
             else:
                 context_docs = st.session_state.vector_store.similarity_search(user_query, k=3)
 
