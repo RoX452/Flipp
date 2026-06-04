@@ -44,13 +44,15 @@ if "expanded_chunk" not in st.session_state:
     st.session_state.expanded_chunk = None
 if "last_semantic_query" not in st.session_state:
     st.session_state.last_semantic_query = ""
+if "search_query" not in st.session_state:
+    st.session_state.search_query = ""
 
 # Variable global para guardar las coincidencias de la barra lateral
 valid_results = []
 
 with st.sidebar:
     st.header("Búsqueda Rápida")
-    semantic_query = st.text_input("Escribe una palabra o concepto:")
+    semantic_query = st.text_input("Escribe una palabra o concepto:", key="search_query")
     
     # Si el usuario busca una nueva palabra, limpiamos el bloque expandido viejo
     if semantic_query != st.session_state.last_semantic_query:
@@ -64,6 +66,7 @@ with st.sidebar:
         st.session_state.messages = []
         st.session_state.expanded_chunk = None
         st.session_state.last_semantic_query = ""
+        st.session_state.search_query = ""
         st.rerun()
 
 uploaded_files = st.file_uploader("Sube archivos PDF para analizar", type="pdf", accept_multiple_files=True)
