@@ -196,7 +196,8 @@ if st.session_state.vector_store is not None:
             system_prompt = (
                 "Eres un asistente analista de documentos. "
                 "Usa únicamente los siguientes fragmentos de contexto recuperado para responder a la pregunta del usuario. "
-                "Si la respuesta no se encuentra en el contexto, DEBES comenzar tu respuesta obligatoriamente con la etiqueta 'NO_ENCONTRADO:' seguida de tu explicación, y no intentes inventarla.\n\n"
+                "Si los documentos no contienen ABSOLUTAMENTE NADA de información relacionada con la pregunta, DEBES comenzar tu respuesta obligatoriamente con la etiqueta 'NO_ENCONTRADO:' seguida de tu explicación.\n"
+                "Pero si los documentos SÍ mencionan el tema (aunque sea de forma parcial o sin dar una respuesta completa), NO uses la etiqueta y explica basándote en lo que sí encontraste.\n\n"
                 "Contexto recuperado de la base de datos vectorial:\n{context}"
             )
             prompt = ChatPromptTemplate.from_messages([
