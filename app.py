@@ -50,6 +50,14 @@ if "search_query" not in st.session_state:
 # Variable global para guardar las coincidencias de la barra lateral
 valid_results = []
 
+def clear_database():
+    st.session_state.vector_store = None
+    st.session_state.all_chunks = []
+    st.session_state.messages = []
+    st.session_state.expanded_chunk = None
+    st.session_state.last_semantic_query = ""
+    st.session_state.search_query = ""
+
 with st.sidebar:
     st.header("Búsqueda Rápida")
     semantic_query = st.text_input("Escribe una palabra o concepto:", key="search_query")
@@ -60,14 +68,7 @@ with st.sidebar:
         st.session_state.last_semantic_query = semantic_query
         
     st.markdown("---")
-    if st.button("Limpiar Base de Datos", use_container_width=True):
-        st.session_state.vector_store = None
-        st.session_state.all_chunks = []
-        st.session_state.messages = []
-        st.session_state.expanded_chunk = None
-        st.session_state.last_semantic_query = ""
-        st.session_state.search_query = ""
-        st.rerun()
+    st.button("Limpiar Base de Datos", use_container_width=True, on_click=clear_database)
 
 uploaded_files = st.file_uploader("Sube archivos PDF para analizar", type="pdf", accept_multiple_files=True)
 
