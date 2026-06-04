@@ -45,6 +45,9 @@ if "expanded_chunk" not in st.session_state:
 if "last_semantic_query" not in st.session_state:
     st.session_state.last_semantic_query = ""
 
+# Variable global para guardar las coincidencias de la barra lateral
+valid_results = []
+
 with st.sidebar:
     st.header("Búsqueda Rápida")
     semantic_query = st.text_input("Escribe una palabra o concepto:")
@@ -66,7 +69,7 @@ with st.sidebar:
 uploaded_files = st.file_uploader("Sube archivos PDF para analizar", type="pdf", accept_multiple_files=True)
 
 if uploaded_files and st.session_state.vector_store is None:
-    with st.spinner("Leyendo y procesando todos los documentos (Configurando IA Multilingüe)..."):
+    with st.spinner("Leyendo y procesando todos los documentos..."):
         all_splits = []
         for uploaded_file in uploaded_files:
             with tempfile.NamedTemporaryFile(delete=False, suffix=".pdf") as tmp_file:
@@ -78,41 +81,35 @@ if uploaded_files and st.session_state.vector_store is None:
             for doc in docs:
                 doc.metadata["source_filename"] = uploaded_file.name
 
-            # Chunks más grandes para no perder contexto en el chat
             text_splitter = RecursiveCharacterTextSplitter(chunk_size=1500, chunk_overlap=300)
             splits = text_splitter.split_documents(docs)
             all_splits.extend(splits)
             os.unlink(tmp_path)
 
-        # Guardar fragmentos originales en bruto para búsquedas literales
         st.session_state.all_chunks = all_splits
 
-        # Usar modelo MULTILINGÜE para el Chat (RAG)
         embeddings = HuggingFaceEmbeddings(model_name="sentence-transformers/paraphrase-multilingual-MiniLM-L12-v2")
         from langchain_core.vectorstores import InMemoryVectorStore
         st.session_state.vector_store = InMemoryVectorStore.from_documents(documents=all_splits, embedding=embeddings)
     
-    st.success("¡Base de conocimiento creada! Ya puedes hacer preguntas o buscar.")
+    st.success("Ya puedes hacer preguntas o buscar.")
 
 # Panel Lateral de Búsqueda
 if st.session_state.vector_store is not None and semantic_query:
     with st.sidebar:
         st.write(f"**Coincidencias encontradas:** *(Buscando en {len(st.session_state.all_chunks)} fragmentos)*")
         
-        # Búsqueda EXACTA (Ctrl+F múltiple)
         query_words = semantic_query.lower().split()
-        valid_results = []
         
         for chunk in st.session_state.all_chunks:
             chunk_text = chunk.page_content.lower()
             if all(w in chunk_text for w in query_words):
                 valid_results.append(chunk)
-                if len(valid_results) >= 10:  # Mostrar más resultados
+                if len(valid_results) >= 10:  
                     break
         
         if not valid_results:
             st.warning(f"No se encontró la palabra '{semantic_query}' exactamente escrita así en ningún PDF.")
-            # Añadir un botón rápido para limpiar por si el uploader se bugueó
             if len(st.session_state.all_chunks) == 0:
                 st.error("Error: La memoria está vacía. Por favor elimina los PDFs y súbelos de nuevo.")
         
@@ -171,7 +168,6 @@ if st.session_state.vector_store is not None:
                     for i, doc in enumerate(msg["sources"]):
                         filename = doc.metadata.get("source_filename", "Desconocido")
                         st.caption(f"Fragmento {i+1} - {filename} (Pág. {doc.metadata.get('page', 'N/A')}):")
-                        # NO resaltar el prompt del usuario en las fuentes del chat
                         st.markdown(doc.page_content)
 
     user_query = st.chat_input("Escribe aquí tu pregunta...")
@@ -182,7 +178,7 @@ if st.session_state.vector_store is not None:
         with st.chat_message("user", avatar="🧑‍💻"):
             st.write(user_query)
         
-        with st.spinner("Analizando múltiples documentos..."):
+        with st.spinner("Analizando documentos..."):
             llm = ChatGoogleGenerativeAI(model="gemini-3.1-flash-lite", temperature=0.2)
             system_prompt = (
                 "Eres un asistente analista de documentos. "
@@ -195,25 +191,32 @@ if st.session_state.vector_store is not None:
                 ("human", "{input}"),
             ])
 
-            # Aumentar 'k' a 8 para asegurar que Gemini tenga suficiente contexto de múltiples PDFs
-            retriever = st.session_state.vector_store.as_retriever(search_kwargs={"k": 8})
-            question_answer_chain = create_stuff_documents_chain(llm, prompt)
-            rag_chain = create_retrieval_chain(retriever, question_answer_chain)
+            # LÓGICA CRÍTICA: Forzar a Gemini a usar SOLO las coincidencias de la barra lateral si existen
+            if semantic_query and valid_results:
+                context_docs = valid_results
+            else:
+                # Si no hay búsqueda en la barra lateral, hacemos búsqueda semántica normal pero con k=3 para no traer basura de otros PDFs
+                context_docs = st.session_state.vector_store.similarity_search(user_query, k=3)
 
-            response = rag_chain.invoke({"input": user_query})
+            question_answer_chain = create_stuff_documents_chain(llm, prompt)
+            
+            response_answer = question_answer_chain.invoke({
+                "context": context_docs,
+                "input": user_query
+            })
 
             with st.chat_message("assistant", avatar="✨"):
-                st.write(response["answer"])
+                st.write(response_answer)
                 
                 with st.expander("Ver fuentes de esta respuesta"):
-                    for i, doc in enumerate(response["context"]):
+                    for i, doc in enumerate(context_docs):
                         filename = doc.metadata.get("source_filename", "Desconocido")
                         st.caption(f"Fragmento {i+1} - {filename} (Pág. {doc.metadata.get('page', 'N/A')}):")
                         st.markdown(doc.page_content)
 
             st.session_state.messages.append({
                 "role": "assistant", 
-                "content": response["answer"],
-                "sources": response["context"],
+                "content": response_answer,
+                "sources": context_docs,
                 "query": user_query
             })
