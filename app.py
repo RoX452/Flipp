@@ -168,14 +168,14 @@ if st.session_state.vector_store is not None:
         with st.chat_message(msg["role"], avatar=avatar_icon):
             st.write(msg["content"])
             if msg["role"] == "assistant" and "sources" in msg:
-                ans_low = msg["content"].lower()
-                found = not any(p in ans_low for p in ["no se encuentra", "no está en", "no dispongo", "no menciona", "no proporciona"])
-                if found and msg["sources"]:
+                if msg.get("found", True) and msg["sources"]:
                     with st.expander("Ver fuentes de esta respuesta"):
                         for i, doc in enumerate(msg["sources"]):
                             filename = doc.metadata.get("source_filename", "Desconocido")
                             st.caption(f"Fragmento {i+1} - {filename} (Pág. {doc.metadata.get('page', 'N/A')}):")
-                            st.markdown(doc.page_content)
+                            # Restaurado el resaltado inteligente (ignora 'este', 'como', etc.)
+                            hl_text = highlight_text(doc.page_content, msg.get("query", ""))
+                            st.markdown(hl_text, unsafe_allow_html=True)
                 elif msg["sources"]:
                     st.caption("*(No se extrajo información de los documentos para esta respuesta)*")
 
@@ -192,7 +192,7 @@ if st.session_state.vector_store is not None:
             system_prompt = (
                 "Eres un asistente analista de documentos. "
                 "Usa únicamente los siguientes fragmentos de contexto recuperado para responder a la pregunta del usuario. "
-                "Si la respuesta no se encuentra en el contexto, indica claramente que la información no está en los documentos, no intentes inventarla.\n\n"
+                "Si la respuesta no se encuentra en el contexto, DEBES comenzar tu respuesta obligatoriamente con la etiqueta 'NO_ENCONTRADO:' seguida de tu explicación, y no intentes inventarla.\n\n"
                 "Contexto recuperado de la base de datos vectorial:\n{context}"
             )
             prompt = ChatPromptTemplate.from_messages([
@@ -200,38 +200,42 @@ if st.session_state.vector_store is not None:
                 ("human", "{input}"),
             ])
 
-            # LÓGICA CRÍTICA: Forzar a Gemini a usar SOLO las coincidencias de la barra lateral si existen
             if semantic_query and valid_results:
                 context_docs = valid_results
             else:
-                # Si no hay búsqueda en la barra lateral, hacemos búsqueda semántica normal pero con k=3 para no traer basura de otros PDFs
                 context_docs = st.session_state.vector_store.similarity_search(user_query, k=3)
 
             question_answer_chain = create_stuff_documents_chain(llm, prompt)
             
-            response_answer = question_answer_chain.invoke({
+            raw_response = question_answer_chain.invoke({
                 "context": context_docs,
                 "input": user_query
             })
 
+            # Detectar si Gemini usó la etiqueta especial
+            found = True
+            clean_answer = raw_response
+            if "NO_ENCONTRADO" in raw_response[:40]:
+                found = False
+                clean_answer = re.sub(r'\**NO_ENCONTRADO:?\**\s*', '', raw_response, flags=re.IGNORECASE).strip()
+
             with st.chat_message("assistant", avatar="✨"):
-                st.write(response_answer)
-                
-                ans_low = response_answer.lower()
-                found = not any(p in ans_low for p in ["no se encuentra", "no está en", "no dispongo", "no menciona", "no proporciona"])
+                st.write(clean_answer)
                 
                 if found and context_docs:
                     with st.expander("Ver fuentes de esta respuesta"):
                         for i, doc in enumerate(context_docs):
                             filename = doc.metadata.get("source_filename", "Desconocido")
                             st.caption(f"Fragmento {i+1} - {filename} (Pág. {doc.metadata.get('page', 'N/A')}):")
-                            st.markdown(doc.page_content)
+                            hl_text = highlight_text(doc.page_content, user_query)
+                            st.markdown(hl_text, unsafe_allow_html=True)
                 elif context_docs:
                     st.caption("*(No se extrajo información de los documentos para esta respuesta)*")
 
             st.session_state.messages.append({
                 "role": "assistant", 
-                "content": response_answer,
+                "content": clean_answer,
                 "sources": context_docs,
-                "query": user_query
+                "query": user_query,
+                "found": found
             })
