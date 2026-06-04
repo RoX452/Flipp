@@ -97,21 +97,24 @@ if uploaded_files and st.session_state.vector_store is None:
 # Panel Lateral de Búsqueda
 if st.session_state.vector_store is not None and semantic_query:
     with st.sidebar:
-        st.write("**Coincidencias encontradas:**")
+        st.write(f"**Coincidencias encontradas:** *(Buscando en {len(st.session_state.all_chunks)} fragmentos)*")
         
-        # Búsqueda EXACTA (Ctrl+F múltiple) en lugar de Semántica
+        # Búsqueda EXACTA (Ctrl+F múltiple)
         query_words = semantic_query.lower().split()
         valid_results = []
         
         for chunk in st.session_state.all_chunks:
-            # Revisa si TODAS las palabras buscadas existen literalmente en el fragmento
-            if all(w in chunk.page_content.lower() for w in query_words):
+            chunk_text = chunk.page_content.lower()
+            if all(w in chunk_text for w in query_words):
                 valid_results.append(chunk)
-                if len(valid_results) >= 5:  # Límite de resultados
+                if len(valid_results) >= 10:  # Mostrar más resultados
                     break
         
         if not valid_results:
-            st.info(f"No se encontraron coincidencias exactas para '{semantic_query}'.")
+            st.warning(f"No se encontró la palabra '{semantic_query}' exactamente escrita así en ningún PDF.")
+            # Añadir un botón rápido para limpiar por si el uploader se bugueó
+            if len(st.session_state.all_chunks) == 0:
+                st.error("Error: La memoria está vacía. Por favor elimina los PDFs y súbelos de nuevo.")
         
         for i, res in enumerate(valid_results):
             filename = res.metadata.get("source_filename", "Desconocido")
