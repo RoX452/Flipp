@@ -15,14 +15,20 @@ from langchain_core.prompts import ChatPromptTemplate
 load_dotenv()
 st.set_page_config(page_title="Flipp", page_icon="📄", layout="wide")
 
-# Helper function to highlight keywords
+# Helper function to highlight keywords with a translucent green capsule
 def highlight_text(text, query):
     if not query: return text
-    # Extraer palabras de más de 3 letras para resaltar
-    words = [re.escape(w) for w in query.split() if len(w) > 3]
+    
+    stop_words = {"para", "como", "este", "esta", "estos", "estas", "pero", "porque", "cuando", "donde", "quien", "resumeme", "explicame", "dime", "cual", "sobre", "aquel", "aquella", "tiene"}
+    # Extraer palabras clave (ignorar palabras comunes y cortas)
+    words = [re.escape(w) for w in query.split() if len(w) > 4 and w.lower() not in stop_words]
+    
     if not words: return text
     pattern = re.compile(f"({'|'.join(words)})", re.IGNORECASE)
-    return pattern.sub(r'<mark style="background-color: #ffd700; color: black; border-radius: 3px; padding: 0 2px;">\1</mark>', text)
+    
+    # Cápsula verde translúcida y elegante
+    capsule_style = "background-color: rgba(46, 204, 113, 0.2); border: 1px solid rgba(46, 204, 113, 0.6); border-radius: 12px; padding: 2px 8px; color: inherit; font-weight: 500;"
+    return pattern.sub(rf'<mark style="{capsule_style}">\1</mark>', text)
 
 st.title("📄 Flipp")
 st.markdown("Sube tus pdfs")
@@ -34,15 +40,24 @@ if "messages" not in st.session_state:
     st.session_state.messages = []
 if "expanded_chunk" not in st.session_state:
     st.session_state.expanded_chunk = None
+if "last_semantic_query" not in st.session_state:
+    st.session_state.last_semantic_query = ""
 
 with st.sidebar:
     st.header("Búsqueda Rápida")
-    semantic_query = st.text_input("Busca conceptos en todos los PDFs:")
+    semantic_query = st.text_input("Escribe una palabra o concepto:")
+    
+    # Si el usuario busca una nueva palabra, limpiamos el bloque expandido viejo
+    if semantic_query != st.session_state.last_semantic_query:
+        st.session_state.expanded_chunk = None
+        st.session_state.last_semantic_query = semantic_query
+        
     st.markdown("---")
-    if st.button("Limpiar Base de Datos (Reiniciar)"):
+    if st.button("Limpiar Base de Datos", use_container_width=True):
         st.session_state.vector_store = None
         st.session_state.messages = []
         st.session_state.expanded_chunk = None
+        st.session_state.last_semantic_query = ""
         st.rerun()
 
 uploaded_files = st.file_uploader("Sube archivos PDF para analizar", type="pdf", accept_multiple_files=True)
@@ -80,37 +95,46 @@ if st.session_state.vector_store is not None and semantic_query:
             filename = res.metadata.get("source_filename", "Desconocido")
             page = res.metadata.get("page", "N/A")
             
-            # Mostrar un fragmento corto
-            snippet = res.page_content[:150] + "..."
+            snippet = res.page_content[:120] + "..."
             snippet_hl = highlight_text(snippet, semantic_query)
             
-            st.info(f"**PDF:** {filename} (Pág. {page})")
-            st.markdown(f"<div style='font-size:0.9em; margin-bottom: 10px;'>{snippet_hl}</div>", unsafe_allow_html=True)
-            
-            # Botón para expandir al centro
-            if st.button("Ver texto completo", key=f"btn_expand_{i}"):
-                st.session_state.expanded_chunk = {
-                    "text": res.page_content,
-                    "filename": filename,
-                    "page": page,
-                    "query": semantic_query
-                }
+            with st.container(border=True):
+                st.caption(f"📄 {filename} (Pág. {page})")
+                st.markdown(f"<div style='font-size:0.85em; margin-bottom: 10px; color: #a0a0a0;'>{snippet_hl}</div>", unsafe_allow_html=True)
+                
+                # Botón más discreto
+                if st.button("Abrir fragmento 📖", key=f"btn_expand_{i}", use_container_width=True):
+                    st.session_state.expanded_chunk = {
+                        "text": res.page_content,
+                        "filename": filename,
+                        "page": page,
+                        "query": semantic_query
+                    }
 
 if st.session_state.vector_store is not None:
     st.markdown("---")
     
-    # Renderizar el fragmento expandido si existe
+    # Renderizar el fragmento expandido con un diseño más integrado
     if st.session_state.expanded_chunk:
         chunk = st.session_state.expanded_chunk
-        st.subheader("🔍 Vista detallada del fragmento")
-        with st.container():
-            st.caption(f"**Fuente:** {chunk['filename']} | **Página:** {chunk['page']}")
-            highlighted_full = highlight_text(chunk['text'], chunk['query'])
-            st.markdown(f"<div style='background-color:#1e1e1e; padding:15px; border-radius:5px; border-left: 4px solid #ffd700;'>{highlighted_full}</div>", unsafe_allow_html=True)
-            if st.button("✖ Cerrar detalle"):
+        
+        col1, col2 = st.columns([0.9, 0.1])
+        with col1:
+            st.markdown(f"**📖 Viendo detalle de:** `{chunk['filename']}` *(Pág. {chunk['page']})*")
+        with col2:
+            if st.button("✖", help="Cerrar detalle"):
                 st.session_state.expanded_chunk = None
                 st.rerun()
-        st.markdown("---")
+                
+        highlighted_full = highlight_text(chunk['text'], chunk['query'])
+        st.markdown(
+            f"""
+            <div style='background-color: rgba(255, 255, 255, 0.05); padding: 20px; border-radius: 8px; border-left: 5px solid #2ecc71; font-style: italic; margin-bottom: 30px;'>
+                {highlighted_full}
+            </div>
+            """, 
+            unsafe_allow_html=True
+        )
 
     st.subheader("Chat con tu documento")
 
@@ -119,7 +143,8 @@ if st.session_state.vector_store is not None:
         with st.chat_message(msg["role"]):
             st.write(msg["content"])
             if msg["role"] == "assistant" and "sources" in msg:
-                with st.expander("Fuentes de información consultadas"):
+                # El expander está encapsulado DENTRO del mensaje del asistente para evitar confusión
+                with st.expander("Ver fuentes de esta respuesta"):
                     for i, doc in enumerate(msg["sources"]):
                         filename = doc.metadata.get("source_filename", "Desconocido")
                         st.caption(f"Fragmento {i+1} - {filename} (Pág. {doc.metadata.get('page', 'N/A')}):")
@@ -148,18 +173,18 @@ if st.session_state.vector_store is not None:
                 ("human", "{input}"),
             ])
 
+            # RAG puro: SOLO busca fragmentos para ESTA consulta específica
             retriever = st.session_state.vector_store.as_retriever(search_kwargs={"k": 5})
             question_answer_chain = create_stuff_documents_chain(llm, prompt)
             rag_chain = create_retrieval_chain(retriever, question_answer_chain)
 
             response = rag_chain.invoke({"input": user_query})
 
-            # Mostrar respuesta
+            # Mostrar respuesta y asociar EXCLUSIVAMENTE sus fuentes a este mensaje
             with st.chat_message("assistant"):
                 st.write(response["answer"])
                 
-                # Mostrar fuentes interactivas
-                with st.expander("Fuentes de información consultadas"):
+                with st.expander("Ver fuentes de esta respuesta"):
                     for i, doc in enumerate(response["context"]):
                         filename = doc.metadata.get("source_filename", "Desconocido")
                         st.caption(f"Fragmento {i+1} - {filename} (Pág. {doc.metadata.get('page', 'N/A')}):")
