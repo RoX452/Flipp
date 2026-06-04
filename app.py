@@ -168,11 +168,16 @@ if st.session_state.vector_store is not None:
         with st.chat_message(msg["role"], avatar=avatar_icon):
             st.write(msg["content"])
             if msg["role"] == "assistant" and "sources" in msg:
-                with st.expander("Ver fuentes de esta respuesta"):
-                    for i, doc in enumerate(msg["sources"]):
-                        filename = doc.metadata.get("source_filename", "Desconocido")
-                        st.caption(f"Fragmento {i+1} - {filename} (Pág. {doc.metadata.get('page', 'N/A')}):")
-                        st.markdown(doc.page_content)
+                ans_low = msg["content"].lower()
+                found = not any(p in ans_low for p in ["no se encuentra", "no está en", "no dispongo", "no menciona", "no proporciona"])
+                if found and msg["sources"]:
+                    with st.expander("Ver fuentes de esta respuesta"):
+                        for i, doc in enumerate(msg["sources"]):
+                            filename = doc.metadata.get("source_filename", "Desconocido")
+                            st.caption(f"Fragmento {i+1} - {filename} (Pág. {doc.metadata.get('page', 'N/A')}):")
+                            st.markdown(doc.page_content)
+                elif msg["sources"]:
+                    st.caption("*(No se extrajo información de los documentos para esta respuesta)*")
 
     user_query = st.chat_input("Escribe aquí tu pregunta...")
 
@@ -212,11 +217,17 @@ if st.session_state.vector_store is not None:
             with st.chat_message("assistant", avatar="✨"):
                 st.write(response_answer)
                 
-                with st.expander("Ver fuentes de esta respuesta"):
-                    for i, doc in enumerate(context_docs):
-                        filename = doc.metadata.get("source_filename", "Desconocido")
-                        st.caption(f"Fragmento {i+1} - {filename} (Pág. {doc.metadata.get('page', 'N/A')}):")
-                        st.markdown(doc.page_content)
+                ans_low = response_answer.lower()
+                found = not any(p in ans_low for p in ["no se encuentra", "no está en", "no dispongo", "no menciona", "no proporciona"])
+                
+                if found and context_docs:
+                    with st.expander("Ver fuentes de esta respuesta"):
+                        for i, doc in enumerate(context_docs):
+                            filename = doc.metadata.get("source_filename", "Desconocido")
+                            st.caption(f"Fragmento {i+1} - {filename} (Pág. {doc.metadata.get('page', 'N/A')}):")
+                            st.markdown(doc.page_content)
+                elif context_docs:
+                    st.caption("*(No se extrajo información de los documentos para esta respuesta)*")
 
             st.session_state.messages.append({
                 "role": "assistant", 
